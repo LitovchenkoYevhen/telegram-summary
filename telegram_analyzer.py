@@ -84,50 +84,53 @@ async def init_telethon():
     await telethon_client.start()
     return telethon_client
 
-async def analyze_messages(messages, chat_title, topic_title=None, is_full_analysis=False):
-    """Анализ сообщений"""
+async def analyze_messages(messages, chat_title, topic_name, is_full_analysis=False):
+    logger.info(f"Analyzing {'full history' if is_full_analysis else 'daily'} for {chat_title} - {topic_name}")
+    
+    summary_type = "полная история" if is_full_analysis else "последние 24 часа"
+    header = f"📊 {chat_title}\n💬 {topic_name}\n📅 {summary_type}\n\n"
+    
     if not messages:
         return None
         
-    messages_text = "\n".join([
-        f"[{msg.date}] {msg.sender.first_name if msg.sender else 'Unknown'}: {msg.text}"
-        for msg in messages if msg.text
-    ])
+    messages_text = []
+    for message in messages:
+        if message.message:
+            messages_text.append(message.message)
+        if message.media:
+            messages_text.append("[медиа-файл]")
     
-    if not messages_text.strip():
+    if not messages_text:
         return None
+        
+    combined_text = "\n".join(messages_text)
     
-    openai_client = OpenAI(api_key=OPENAI_API_KEY)
+    client = OpenAI(api_key=config['OPENAI_API_KEY'])
     
-    system_prompt = f"""Создайте краткую сводку обсуждения из топика '{topic_title}'. 
-    {'Это полный анализ истории обсуждения.' if is_full_analysis else 'Это анализ за последние 24 часа.'}
-    Включите: основные темы, принятые решения, важные моменты."""
+    prompt = f"""
+    Make a brief summary of the following chat messages.
+    Include all important information but make it concise.
+    Don't skip any topics or decisions, just make them shorter.
+    Don't evaluate or prioritize information - include everything in a brief form.
+    The response should be in Russian.
+    
+    Messages:
+    {combined_text}
+    """
     
     try:
-        response = openai_client.chat.completions.create(
+        response = client.chat.completions.create(
             model="gpt-3.5-turbo",
-            messages=[{
-                "role": "system",
-                "content": system_prompt
-            }, {
-                "role": "user",
-                "content": f"Проанализируйте следующую беседу:\n{messages_text}"
-            }]
+            messages=[
+                {"role": "system", "content": "You are a helpful assistant that summarizes chat messages in Russian"},
+                {"role": "user", "content": prompt}
+            ]
         )
-        
         summary = response.choices[0].message.content
-        report = f"""
-📊 {'Полный анализ' if is_full_analysis else 'Ежедневная сводка'}
-📅 Дата: {datetime.now().strftime('%Y-%m-%d')}
-💬 Группа: {chat_title}
-📌 Топик: {topic_title}
-
-{summary}
-{'=' * 50}
-"""
-        return report
+        return f"{header}{summary}"
+        
     except Exception as e:
-        print(f"Ошибка при анализе сообщений: {e}")
+        logger.error(f"Error during OpenAI API call: {e}")
         return None
 
 async def run_analysis(is_full_analysis=False):
@@ -167,7 +170,7 @@ async def run_analysis(is_full_analysis=False):
                         )
                         
                         if messages:
-                            summary = await analyze_messages(messages, chat.title, topic_name)
+                            summary = await analyze_messages(messages, chat.title, topic_name, is_full_analysis)
                             if summary:
                                 await telethon_client.send_message(target_group, summary)
                                 logger.info(f"Analysis sent for topic: {topic_name}")
