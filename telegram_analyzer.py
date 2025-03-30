@@ -84,7 +84,7 @@ async def init_telethon():
     await telethon_client.start()
     return telethon_client
 
-async def analyze_messages(messages, chat_title, topic_name, is_full_analysis=False):
+async def analyze_messages(messages, chat_title, topic_name, is_full_analysis=False, mode="retell"):
     logger.info(f"Analyzing {'full history' if is_full_analysis else 'daily'} for {chat_title} - {topic_name}")
     
     summary_type = "полная история" if is_full_analysis else "последние 24 часа"
@@ -107,15 +107,34 @@ async def analyze_messages(messages, chat_title, topic_name, is_full_analysis=Fa
     
     client = OpenAI(api_key=config['OPENAI_API_KEY'])
     
-    prompt = f"""
-    Read these chat messages and tell me what happened there.
-    Focus on events, decisions, and key points of discussions.
-    Keep all topics but explain them briefly.
-    Write in Russian, in a clear narrative style.
-    
-    Messages:
-    {combined_text}
-    """
+    if mode == "describe":
+        prompt = f"""
+        Make a brief summary of the following chat messages.
+        Include all important information but make it concise.
+        Don't skip any topics or decisions, just make them shorter.
+        Don't evaluate or prioritize information - include everything in a brief form.
+        The response should be in Russian.
+        
+        Messages:
+        {combined_text}
+        """
+    else:  # mode == "retell"
+        prompt = f"""
+        Read these messages and explain exactly what happened:
+        - If there's a problem mentioned, what specific problem?
+        - If branches are discussed, which branches exactly?
+        - If there are errors, what exact errors?
+        - If there are decisions made, what specific decisions?
+        - If there are tasks assigned, to whom and what tasks?
+        
+        Don't use generic phrases like "discussed an issue" or "talked about branches".
+        Instead, be specific: "Fixed Docker volume mounting error in dev branch" or "John needs to update API keys by Friday".
+        
+        Write in Russian, focusing on concrete details.
+        
+        Messages:
+        {combined_text}
+        """
     
     try:
         response = client.chat.completions.create(
@@ -132,7 +151,7 @@ async def analyze_messages(messages, chat_title, topic_name, is_full_analysis=Fa
         logger.error(f"Error during OpenAI API call: {e}")
         return None
 
-async def run_analysis(is_full_analysis=False):
+async def run_analysis(is_full_analysis=False, mode="retell"):
     """Асинхронный анализ чатов"""
     global telethon_client
     logger.info(f"Starting {'full' if is_full_analysis else 'daily'} analysis")
@@ -169,7 +188,7 @@ async def run_analysis(is_full_analysis=False):
                         )
                         
                         if messages:
-                            summary = await analyze_messages(messages, chat.title, topic_name, is_full_analysis)
+                            summary = await analyze_messages(messages, chat.title, topic_name, is_full_analysis, mode)
                             if summary:
                                 await telethon_client.send_message(target_group, summary)
                                 logger.info(f"Analysis sent for topic: {topic_name}")
@@ -196,21 +215,29 @@ async def log_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     print("============================\n")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик команды /start"""
     logger.info(f"Start command from user: {update.effective_user.id} ({update.effective_user.username})")
+    
+    mode = "describe"
+    if context.args and context.args[0] in ["retell", "describe"]:
+        mode = context.args[0]
+    
     await update.message.reply_text("Starting daily chat analysis...")
     try:
-        await run_analysis(is_full_analysis=False)
+        await run_analysis(is_full_analysis=False, mode=mode)
         await update.message.reply_text("Analysis completed successfully!")
     except Exception as e:
         await update.message.reply_text(f"Analysis error: {str(e)}")
 
 async def full_analyze(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик команды /full_analyze"""
     logger.info(f"Full analyze command from user: {update.effective_user.id} ({update.effective_user.username})")
+    
+    mode = "describe"
+    if context.args and context.args[0] in ["retell", "describe"]:
+        mode = context.args[0]
+    
     await update.message.reply_text("Starting full history analysis...")
     try:
-        await run_analysis(is_full_analysis=True)
+        await run_analysis(is_full_analysis=True, mode=mode)
         await update.message.reply_text("Full analysis completed successfully!")
     except Exception as e:
         await update.message.reply_text(f"Analysis error: {str(e)}")
