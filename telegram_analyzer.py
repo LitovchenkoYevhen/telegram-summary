@@ -46,6 +46,7 @@ import asyncio
 import logging
 import nest_asyncio
 from telethon.tl.functions.channels import GetForumTopicsRequest
+from chat_handler import ChatHandler
 
 # Включаем поддержку вложенных event loops
 nest_asyncio.apply()
@@ -76,6 +77,9 @@ CHATS_CONFIG = {
 
 # Глобальный клиент Telethon
 telethon_client = None
+
+# Создаем глобальный экземпляр ChatHandler
+chat_handler = ChatHandler()
 
 async def init_telethon():
     """Асинхронная инициализация Telethon клиента"""
@@ -288,8 +292,15 @@ def main():
     
     application = ApplicationBuilder().token(BOT_TOKEN).build()
     
+    # Добавляем обработчики команд
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("full_analyze", full_analyze))
+    
+    # Используем глобальный chat_handler
+    application.add_handler(MessageHandler(
+        filters.TEXT & ~filters.COMMAND,
+        chat_handler.handle_message
+    ))
     
     logger.info("\n" + "="*40)
     logger.info("Бот запущен и готов к работе!")
@@ -302,6 +313,7 @@ def main():
     logger.info("/full_analyze retell - полный анализ в формате пересказа")
     logger.info("Цитирование - отправьте сообщение с текстом в кавычках для уточнения деталей")
     logger.info("Пример: Что имелось в виду под \"проблема с Docker\"?")
+    logger.info("Также бот поддерживает обычное общение - просто напишите сообщение")
     logger.info("="*40 + "\n")
     
     application.run_polling()
