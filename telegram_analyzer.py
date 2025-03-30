@@ -132,17 +132,27 @@ async def analyze_messages(messages, chat_title, topic_title=None, is_full_analy
 async def run_analysis(is_full_analysis=False):
     """Асинхронный анализ чатов"""
     global telethon_client
-    if telethon_client is None or not telethon_client.is_connected():
-        telethon_client = await init_telethon()
-        
     logger.info(f"Starting {'full' if is_full_analysis else 'daily'} analysis")
+    
     try:
         target_group = await telethon_client.get_entity(TARGET_GROUP_LINK)
-        print(f"Целевая группа получена: {target_group.title}")
+        logger.info(f"Target group obtained: {target_group.title}")
         
         for chat_id, config in CHATS_CONFIG.items():
             try:
-                chat = await telethon_client.get_entity(chat_id)
+                # Пробуем получить чат через get_input_entity
+                try:
+                    chat = await telethon_client.get_input_entity(chat_id)
+                except ValueError:
+                    # Если не получилось, пробуем через диалоги
+                    async for dialog in telethon_client.iter_dialogs():
+                        if dialog.id == chat_id:
+                            chat = dialog.entity
+                            break
+                    else:
+                        raise ValueError(f"Chat {chat_id} not found in dialogs")
+                
+                logger.info(f"Analyzing chat: {chat_id}")
                 chat_title = chat.title
                 print(f"Анализ группы: {chat_title}")
                 
@@ -175,7 +185,7 @@ async def run_analysis(is_full_analysis=False):
                 print(error_msg)
                 await telethon_client.send_message(target_group, error_msg)
     except Exception as e:
-        print(f"Ошибка при анализе: {e}")
+        logger.error(f"Analysis error: {e}")
         raise
 
 async def log_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
