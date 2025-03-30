@@ -32,7 +32,7 @@ except ImportError as e:
     print("Выполните: pip install -r requirements.txt")
     exit(1)
 
-from telethon import TelegramClient
+from telethon import TelegramClient, functions, types
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters
 from telegram import Update
 from datetime import datetime, timedelta
@@ -107,51 +107,47 @@ async def analyze_messages(messages, chat_title, topic_name, is_full_analysis=Fa
     
     client = OpenAI(api_key=config['OPENAI_API_KEY'])
     
-    if mode == "describe":
-        prompt = f"""
-        Make a brief summary of the following chat messages.
-        Include all important information but make it concise.
-        Don't skip any topics or decisions, just make them shorter.
-        Don't evaluate or prioritize information - include everything in a brief form.
-        The response should be in Russian.
-        
-        Messages:
-        {combined_text}
-        """
-    else:  # mode == "retell"
-        prompt = f"""
-        Read these messages and explain exactly what happened:
-        - If there's a problem mentioned, what specific problem?
-        - If branches are discussed, which branches exactly?
-        - If there are errors, what exact errors?
-        - If there are decisions made, what specific decisions?
-        - If there are tasks assigned, to whom and what tasks?
-        
-        Don't use generic phrases like "discussed an issue" or "talked about branches".
-        Instead, be specific: "Fixed Docker volume mounting error in dev branch" or "John needs to update API keys by Friday".
-        
-        Write in Russian, focusing on concrete details.
-        
-        Messages:
-        {combined_text}
-        """
+    prompt = f"""
+    Make a brief summary of the following chat messages.
+    Include all important information but make it concise.
+    Don't skip any topics or decisions, just make them shorter.
+    Don't evaluate or prioritize information - include everything in a brief form.
+    
+    Format the response in clear sections:
+    1. Start with key points and decisions if any
+    2. Group related topics together
+    3. Use bullet points for listing items
+    4. Add line breaks between different topics
+    5. Use markdown formatting:
+       - **bold** for important terms
+       - • for bullet points
+       - Add empty line between paragraphs
+    
+    The response should be in Russian.
+    
+    Messages:
+    {combined_text}
+    """
     
     try:
         response = client.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=[
-                {"role": "system", "content": "You are a helpful assistant that explains chat discussions in Russian"},
+                {"role": "system", "content": "You are a helpful assistant that formats summaries in clear, structured text with markdown"},
                 {"role": "user", "content": prompt}
             ]
         )
         summary = response.choices[0].message.content
-        return f"{header}{summary}"
+        
+        # Добавляем разделитель после заголовка
+        formatted_summary = f"{header}{'─' * 30}\n\n{summary}\n\n{'─' * 30}"
+        return formatted_summary
         
     except Exception as e:
         logger.error(f"Error during OpenAI API call: {e}")
         return None
 
-async def run_analysis(is_full_analysis=False, mode="retell", user_id=None, chat_id=None):
+async def run_analysis(*, is_full_analysis=False, mode="retell", user_id=None, context=None, update=None):
     global telethon_client
     logger.info(f"Starting {'full' if is_full_analysis else 'daily'} analysis")
     
@@ -184,21 +180,30 @@ async def run_analysis(is_full_analysis=False, mode="retell", user_id=None, chat
                         
                         if messages:
                             summary = await analyze_messages(messages, chat.title, topic_name, is_full_analysis, mode, user_id)
-                            if summary and context:
-                                await context.bot.send_message(chat_id=update.effective_chat.id, text=summary)
+                            if summary and context and update:
+                                await context.bot.send_message(
+                                    chat_id=update.effective_chat.id,
+                                    text=summary
+                                )
                                 logger.info(f"Analysis sent to user chat: {topic_name}")
                                 
                     except Exception as e:
                         error_msg = f"Error analyzing topic {topic_id}: {str(e)}"
                         logger.error(error_msg)
-                        if context:
-                            await context.bot.send_message(chat_id=update.effective_chat.id, text=error_msg)
+                        if context and update:
+                            await context.bot.send_message(
+                                chat_id=update.effective_chat.id,
+                                text=error_msg
+                            )
                         
             except Exception as e:
                 error_msg = f"Error analyzing chat {chat_id}: {str(e)}"
                 logger.error(error_msg)
-                if context:
-                    await context.bot.send_message(chat_id=update.effective_chat.id, text=error_msg)
+                if context and update:
+                    await context.bot.send_message(
+                        chat_id=update.effective_chat.id,
+                        text=error_msg
+                    )
                 
     except Exception as e:
         logger.error(f"Analysis error: {e}")
@@ -224,11 +229,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Starting daily chat analysis...")
     try:
         await run_analysis(
-            is_full_analysis=False, 
-            mode=mode, 
+            is_full_analysis=False,
+            mode=mode,
             user_id=user_id,
-            update=update,
-            context=context
+            context=context,
+            update=update
         )
         await update.message.reply_text("Analysis completed successfully!")
     except Exception as e:
@@ -245,11 +250,11 @@ async def full_analyze(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Starting full history analysis...")
     try:
         await run_analysis(
-            is_full_analysis=True, 
-            mode=mode, 
+            is_full_analysis=True,
+            mode=mode,
             user_id=user_id,
-            update=update,
-            context=context
+            context=context,
+            update=update
         )
         await update.message.reply_text("Full analysis completed successfully!")
     except Exception as e:
@@ -275,7 +280,6 @@ async def check_auth():
         return False
 
 def main():
-    """Основная функция"""
     logger.info("Initializing application")
     
     loop = asyncio.new_event_loop()
@@ -284,16 +288,21 @@ def main():
     
     application = ApplicationBuilder().token(BOT_TOKEN).build()
     
-    # Добавляем обраотчики команд
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("full_analyze", full_analyze))
     
-    logger.info("Bot started and ready")
-    print("\n====== Бот запущен и готов к работе! ======")
-    print("Доступные команды:")
-    print("/start - запуск ежедневного анализа")
-    print("/full_analyze - запуск полного анализа")
-    print("=========================================\n")
+    logger.info("\n" + "="*40)
+    logger.info("Бот запущен и готов к работе!")
+    logger.info("Доступные команды:")
+    logger.info("/start - запуск ежедневного анализа")
+    logger.info("/start describe - ежедневный анализ в формате описания")
+    logger.info("/start retell - ежедневный анализ в формате пересказа")
+    logger.info("/full_analyze - запуск полного анализа истории")
+    logger.info("/full_analyze describe - полный анализ в формате описания")
+    logger.info("/full_analyze retell - полный анализ в формате пересказа")
+    logger.info("Цитирование - отправьте сообщение с текстом в кавычках для уточнения деталей")
+    logger.info("Пример: Что имелось в виду под \"проблема с Docker\"?")
+    logger.info("="*40 + "\n")
     
     application.run_polling()
 
