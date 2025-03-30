@@ -45,6 +45,7 @@ import getpass
 import asyncio
 import logging
 import nest_asyncio
+from telethon.tl.functions.channels import GetForumTopicsRequest
 
 # Включаем поддержку вложенных event loops
 nest_asyncio.apply()
@@ -143,14 +144,20 @@ async def run_analysis(is_full_analysis=False):
                 chat = await telethon_client.get_entity(chat_id)
                 logger.info(f"Analyzing chat: {chat.title}")
                 
+                forum_topics = await telethon_client(GetForumTopicsRequest(
+                    channel=chat,
+                    offset_date=0,
+                    offset_id=0,
+                    offset_topic=0,
+                    limit=100
+                ))
+                
+                topics_dict = {topic.id: topic.title for topic in forum_topics.topics}
+                logger.info(f"Found topics: {topics_dict}")
+                
                 for topic_id in config['topic_ids']:
                     try:
-                        # Получаем первое сообщение топика для его названия
-                        topic_messages = await telethon_client.get_messages(
-                            chat,
-                            ids=[topic_id]  # Получаем только сообщение с ID топика
-                        )
-                        topic_name = topic_messages[0].message if topic_messages else f"Topic {topic_id}"
+                        topic_name = topics_dict.get(topic_id, f"Topic {topic_id}")
                         logger.info(f"Analyzing topic: {topic_name}")
                         
                         messages = await telethon_client.get_messages(
@@ -166,7 +173,7 @@ async def run_analysis(is_full_analysis=False):
                                 logger.info(f"Analysis sent for topic: {topic_name}")
                                 
                     except Exception as e:
-                        error_msg = f"Error analyzing topic {topic_name}: {str(e)}"
+                        error_msg = f"Error analyzing topic {topic_id}: {str(e)}"
                         logger.error(error_msg)
                         
             except Exception as e:
@@ -229,15 +236,13 @@ def main():
     """Основная функция"""
     logger.info("Initializing application")
     
-    # Инициализируем Telethon клиент в отдельном event loop
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     loop.run_until_complete(init_telethon())
     
-    # Настройка бота
     application = ApplicationBuilder().token(BOT_TOKEN).build()
     
-    # Добавляем обработчики команд
+    # Добавляем обраотчики команд
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("full_analyze", full_analyze))
     
@@ -248,7 +253,6 @@ def main():
     print("/full_analyze - запуск полного анализа")
     print("=========================================\n")
     
-    # Запускаем бота
     application.run_polling()
 
 if __name__ == '__main__':
