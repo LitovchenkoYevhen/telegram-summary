@@ -84,7 +84,7 @@ async def init_telethon():
     await telethon_client.start()
     return telethon_client
 
-async def analyze_messages(messages, chat_title, topic_name, is_full_analysis=False, mode="retell"):
+async def analyze_messages(messages, chat_title, topic_name, is_full_analysis=False, mode="retell", user_id=None):
     logger.info(f"Analyzing {'full history' if is_full_analysis else 'daily'} for {chat_title} - {topic_name}")
     
     summary_type = "полная история" if is_full_analysis else "последние 24 часа"
@@ -151,21 +151,17 @@ async def analyze_messages(messages, chat_title, topic_name, is_full_analysis=Fa
         logger.error(f"Error during OpenAI API call: {e}")
         return None
 
-async def run_analysis(is_full_analysis=False, mode="retell"):
-    """Асинхронный анализ чатов"""
+async def run_analysis(is_full_analysis=False, mode="retell", user_id=None, chat_id=None):
     global telethon_client
     logger.info(f"Starting {'full' if is_full_analysis else 'daily'} analysis")
     
     try:
-        target_group = await telethon_client.get_entity(TARGET_GROUP_LINK)
-        logger.info(f"Target group obtained: {target_group.title}")
-        
         for chat_id, config in CHATS_CONFIG.items():
             try:
                 chat = await telethon_client.get_entity(chat_id)
                 logger.info(f"Analyzing chat: {chat.title}")
                 
-                forum_topics = await telethon_client(GetForumTopicsRequest(
+                forum_topics = await telethon_client(functions.channels.GetForumTopicsRequest(
                     channel=chat,
                     offset_date=0,
                     offset_id=0,
@@ -174,7 +170,6 @@ async def run_analysis(is_full_analysis=False, mode="retell"):
                 ))
                 
                 topics_dict = {topic.id: topic.title for topic in forum_topics.topics}
-                logger.info(f"Found topics: {topics_dict}")
                 
                 for topic_id in config['topic_ids']:
                     try:
@@ -188,18 +183,22 @@ async def run_analysis(is_full_analysis=False, mode="retell"):
                         )
                         
                         if messages:
-                            summary = await analyze_messages(messages, chat.title, topic_name, is_full_analysis, mode)
-                            if summary:
-                                await telethon_client.send_message(target_group, summary)
-                                logger.info(f"Analysis sent for topic: {topic_name}")
+                            summary = await analyze_messages(messages, chat.title, topic_name, is_full_analysis, mode, user_id)
+                            if summary and context:
+                                await context.bot.send_message(chat_id=update.effective_chat.id, text=summary)
+                                logger.info(f"Analysis sent to user chat: {topic_name}")
                                 
                     except Exception as e:
                         error_msg = f"Error analyzing topic {topic_id}: {str(e)}"
                         logger.error(error_msg)
+                        if context:
+                            await context.bot.send_message(chat_id=update.effective_chat.id, text=error_msg)
                         
             except Exception as e:
                 error_msg = f"Error analyzing chat {chat_id}: {str(e)}"
                 logger.error(error_msg)
+                if context:
+                    await context.bot.send_message(chat_id=update.effective_chat.id, text=error_msg)
                 
     except Exception as e:
         logger.error(f"Analysis error: {e}")
@@ -215,7 +214,8 @@ async def log_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     print("============================\n")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    logger.info(f"Start command from user: {update.effective_user.id} ({update.effective_user.username})")
+    user_id = update.effective_user.id
+    logger.info(f"Start command from user: {user_id} ({update.effective_user.username})")
     
     mode = "describe"
     if context.args and context.args[0] in ["retell", "describe"]:
@@ -223,13 +223,20 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await update.message.reply_text("Starting daily chat analysis...")
     try:
-        await run_analysis(is_full_analysis=False, mode=mode)
+        await run_analysis(
+            is_full_analysis=False, 
+            mode=mode, 
+            user_id=user_id,
+            update=update,
+            context=context
+        )
         await update.message.reply_text("Analysis completed successfully!")
     except Exception as e:
         await update.message.reply_text(f"Analysis error: {str(e)}")
 
 async def full_analyze(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    logger.info(f"Full analyze command from user: {update.effective_user.id} ({update.effective_user.username})")
+    user_id = update.effective_user.id
+    logger.info(f"Full analyze command from user: {user_id} ({update.effective_user.username})")
     
     mode = "describe"
     if context.args and context.args[0] in ["retell", "describe"]:
@@ -237,7 +244,13 @@ async def full_analyze(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await update.message.reply_text("Starting full history analysis...")
     try:
-        await run_analysis(is_full_analysis=True, mode=mode)
+        await run_analysis(
+            is_full_analysis=True, 
+            mode=mode, 
+            user_id=user_id,
+            update=update,
+            context=context
+        )
         await update.message.reply_text("Full analysis completed successfully!")
     except Exception as e:
         await update.message.reply_text(f"Analysis error: {str(e)}")
