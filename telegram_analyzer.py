@@ -140,50 +140,39 @@ async def run_analysis(is_full_analysis=False):
         
         for chat_id, config in CHATS_CONFIG.items():
             try:
-                # Пробуем получить чат через get_input_entity
-                try:
-                    chat = await telethon_client.get_input_entity(chat_id)
-                except ValueError:
-                    # Если не получилось, пробуем через диалоги
-                    async for dialog in telethon_client.iter_dialogs():
-                        if dialog.id == chat_id:
-                            chat = dialog.entity
-                            break
-                    else:
-                        raise ValueError(f"Chat {chat_id} not found in dialogs")
-                
-                logger.info(f"Analyzing chat: {chat_id}")
-                chat_title = chat.title
-                print(f"Анализ группы: {chat_title}")
+                chat = await telethon_client.get_entity(chat_id)
+                logger.info(f"Analyzing chat: {chat.title}")
                 
                 for topic_id in config['topic_ids']:
                     try:
-                        print(f"Анализ топика {topic_id}")
-                        if is_full_analysis:
-                            messages = await telethon_client.get_messages(chat, limit=None, reply_to=topic_id)
-                        else:
-                            messages = await telethon_client.get_messages(
-                                chat,
-                                limit=100,
-                                reply_to=topic_id,
-                                offset_date=datetime.now() - timedelta(days=1)
-                            )
+                        # Получаем первое сообщение топика для его названия
+                        topic_messages = await telethon_client.get_messages(
+                            chat,
+                            ids=[topic_id]  # Получаем только сообщение с ID топика
+                        )
+                        topic_name = topic_messages[0].message if topic_messages else f"Topic {topic_id}"
+                        logger.info(f"Analyzing topic: {topic_name}")
+                        
+                        messages = await telethon_client.get_messages(
+                            chat,
+                            limit=100 if not is_full_analysis else None,
+                            reply_to=topic_id
+                        )
                         
                         if messages:
-                            summary = await analyze_messages(messages, chat_title, f"Топик {topic_id}", is_full_analysis)
+                            summary = await analyze_messages(messages, chat.title, topic_name)
                             if summary:
                                 await telethon_client.send_message(target_group, summary)
-                                print(f"Отправлен анализ топика {topic_id}")
-                    
+                                logger.info(f"Analysis sent for topic: {topic_name}")
+                                
                     except Exception as e:
-                        error_msg = f"Ошибка при анализе топика {topic_id}: {str(e)}"
-                        print(error_msg)
-                        await telethon_client.send_message(target_group, error_msg)
+                        error_msg = f"Error analyzing topic {topic_name}: {str(e)}"
+                        logger.error(error_msg)
                         
             except Exception as e:
-                error_msg = f"Ошибка при анализе чата {chat_id}: {str(e)}"
-                print(error_msg)
-                await telethon_client.send_message(target_group, error_msg)
+                error_msg = f"Error analyzing chat {chat_id}: {str(e)}"
+                logger.error(error_msg)
+                
     except Exception as e:
         logger.error(f"Analysis error: {e}")
         raise
