@@ -108,11 +108,10 @@ async def analyze_messages(messages, chat_title, topic_name, is_full_analysis=Fa
     client = OpenAI(api_key=config['OPENAI_API_KEY'])
     
     prompt = f"""
-    Make a brief summary of the following chat messages.
-    Include all important information but make it concise.
-    Don't skip any topics or decisions, just make them shorter.
-    Don't evaluate or prioritize information - include everything in a brief form.
-    The response should be in Russian.
+    Read these chat messages and tell me what happened there.
+    Focus on events, decisions, and key points of discussions.
+    Keep all topics but explain them briefly.
+    Write in Russian, in a clear narrative style.
     
     Messages:
     {combined_text}
@@ -122,7 +121,7 @@ async def analyze_messages(messages, chat_title, topic_name, is_full_analysis=Fa
         response = client.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=[
-                {"role": "system", "content": "You are a helpful assistant that summarizes chat messages in Russian"},
+                {"role": "system", "content": "You are a helpful assistant that explains chat discussions in Russian"},
                 {"role": "user", "content": prompt}
             ]
         )
